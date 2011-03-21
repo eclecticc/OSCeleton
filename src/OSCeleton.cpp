@@ -33,13 +33,17 @@
 char *ADDRESS = "127.0.0.1";
 int PORT = 7110;
 
-#define OUTPUT_BUFFER_SIZE 1024
+#define OUTPUT_BUFFER_SIZE 1024*16
 char osc_buffer[OUTPUT_BUFFER_SIZE];
 UdpTransmitSocket *transmitSocket;
 
 char tmp[50]; //Temp buffer for OSC address pattern
 int userID;
 float jointCoords[3];
+float jointOrients[9];
+
+float posConfidence;
+float orientConfidence;
 
 //Multipliers for coordinate system. This is useful if you use
 //software like animata, that needs OSC messages to use an arbitrary
@@ -67,6 +71,8 @@ bool record = false;
 bool sendRot = false;
 bool filter = false;
 bool preview = false;
+bool raw = false;
+bool sendOrient = false;
 int nDimensions = 3;
 
 void (*oscFunc)(osc::OutboundPacketStream*, char*) = NULL;
@@ -183,20 +189,38 @@ void XN_CALLBACK_TYPE calibration_ended(xn::SkeletonCapability& capability, XnUs
 
 
 
-int jointPos(XnUserID player, XnSkeletonJoint eJoint) {
-	XnSkeletonJointPosition joint;
-	userGenerator.GetSkeletonCap().GetSkeletonJointPosition(player, eJoint, joint);
+int jointPos(XnUserID player, XnSkeletonJoint eJoint) {	
 
-	if (joint.fConfidence < 0.5)
-		return -1;
+	XnSkeletonJointTransformation jointTrans;
 
+	userGenerator.GetSkeletonCap().GetSkeletonJoint(player, eJoint, jointTrans);
+
+	posConfidence = jointTrans.position.fConfidence;
+	
 	userID = player;
-	jointCoords[0] = off_x + (mult_x * (1280 - joint.position.X) / 2560); //Normalize coords to 0..1 interval
-	jointCoords[1] = off_y + (mult_y * (960 - joint.position.Y) / 1920); //Normalize coords to 0..1 interval
-	jointCoords[2] = off_z + (mult_z * joint.position.Z * 7.8125 / 10000); //Normalize coords to 0..7.8125 interval
 
-//for (int i=0; i<9; i++)
-	//	jointRots[i] = joint.orientation.orientation.elements[i];
+	if (!raw)
+	{
+	  jointCoords[0] = off_x + (mult_x * (1280 - jointTrans.position.position.X) / 2560); //Normalize coords to 0..1 interval
+	  jointCoords[1] = off_y + (mult_y * (960 - jointTrans.position.position.Y) / 1920); //Normalize coords to 0..1 interval
+	  jointCoords[2] = off_z + (mult_z * jointTrans.position.position.Z * 7.8125 / 10000); //Normalize coords to 0..7.8125 interval
+	}
+	else
+	{
+	  jointCoords[0] = jointTrans.position.position.X;
+	  jointCoords[1] = jointTrans.position.position.Y;
+	  jointCoords[2] = jointTrans.position.position.Z;
+	}
+
+	if (sendOrient)
+	{
+	  orientConfidence = jointTrans.orientation.fConfidence;
+	  
+	  for (int i=0; i<9; i++)
+	  {
+	    jointOrients[i] = jointTrans.orientation.orientation.elements[i];
+	  }
+	}
 
 	return 0;
 }
@@ -205,26 +229,80 @@ int jointPos(XnUserID player, XnSkeletonJoint eJoint) {
 
 // Generate OSC message with default format
 void genOscMsg(osc::OutboundPacketStream *p, char *name) {
-	*p << osc::BeginMessage( "/joint" );
-	*p << name;
-	if (!kitchenMode)
-		*p << userID;
-	for (int i = 0; i < nDimensions; i++)
-		*p << jointCoords[i];
-	//for (int i=0; i < 9; i++)
-	//	*p << (float)jointRots[i];
-	*p << osc::EndMessage;
+
+	if (posConfidence >= 0.5f)
+	{
+	  *p << osc::BeginMessage( "/joint" );
+	  *p << name;
+	  if (!kitchenMode)
+		  *p << userID;
+	  for (int i = 0; i < nDimensions; i++)
+		  *p << jointCoords[i];
+	  *p << osc::EndMessage;
+	}
+
+	if (!kitchenMode && sendOrient && orientConfidence  >= 0.5f)
+	{
+	  *p << osc::BeginMessage( "/orient" );
+	  *p << name;
+	  if (!kitchenMode)
+		  *p << userID;
+	  
+	  // x data is in first column
+	  *p << jointOrients[0];
+	  *p << jointOrients[0+3];
+	  *p << jointOrients[0+6];
+
+	  // y data is in 2nd column
+	  *p << jointOrients[1];
+	  *p << jointOrients[1+3];
+	  *p << jointOrients[1+6];
+	  
+	  // z data is in 3rd column
+	  *p << jointOrients[2];
+	  *p << jointOrients[2+3];
+	  *p << jointOrients[2+6];
+	  
+	  *p << osc::EndMessage;
+	}
 }
 
 
 
 // Generate OSC message with Quartz Composer format - based on Steve Elbows's code ;)
 void genQCMsg(osc::OutboundPacketStream *p, char *name) {
-	sprintf(tmp, "/joint/%s/%d", name, userID);
-	*p << osc::BeginMessage(tmp);
-	for (int i = 0; i < nDimensions; i++)
-		*p << jointCoords[i];
-	*p << osc::EndMessage;
+
+	if (posConfidence >= 0.5f)
+	{
+	  sprintf(tmp, "/joint/%s/%d", name, userID);
+	  *p << osc::BeginMessage(tmp);
+	  for (int i = 0; i < nDimensions; i++)
+		  *p << jointCoords[i];
+	  *p << osc::EndMessage;
+	}
+
+	if (sendOrient && orientConfidence  >= 0.5f)
+	{
+      sprintf(tmp, "/orient/%s/%d", name, userID);
+	  *p << osc::BeginMessage(tmp);
+
+	  // x data is in first column
+	  *p << jointOrients[0];
+	  *p << jointOrients[0+3];
+	  *p << jointOrients[0+6];
+
+	  // y data is in 2nd column
+	  *p << jointOrients[1];
+	  *p << jointOrients[1+3];
+	  *p << jointOrients[1+6];
+	  
+	  // z data is in 3rd column
+	  *p << jointOrients[2];
+	  *p << jointOrients[2+3];
+	  *p << jointOrients[2+6];
+	  
+	  *p << osc::EndMessage;
+	}
 }
 
 
@@ -236,9 +314,20 @@ void sendUserPosMsg(XnUserID id) {
 	p << osc::BeginBundleImmediate;
 	p << osc::BeginMessage(tmp);
 	userGenerator.GetCoM(id, com);
-	p << (float)(off_x + (mult_x * (1280 - com.X) / 2560));
-	p << (float)(off_y + (mult_y * (1280 - com.Y) / 2560));
-	p << (float)(off_z + (mult_z * com.Z * 7.8125 / 10000));
+
+	if (!raw)
+	{
+	  p << (float)(off_x + (mult_x * (1280 - com.X) / 2560));
+	  p << (float)(off_y + (mult_y * (1280 - com.Y) / 2560));
+	  p << (float)(off_z + (mult_z * com.Z * 7.8125 / 10000));
+	}
+	else
+	{
+	  p << com.X;
+	  p << com.Y;
+	  p << com.Z;
+	}
+
 	p << osc::EndMessage;
 	p << osc::EndBundle;
 	transmitSocket->Send(p.Data(), p.Size());
@@ -382,6 +471,9 @@ Options:\n\
   -q\t\t Enable Quartz Composer OSC format.\n\
   -s <file>\t Save to file (only .oni supported at the moment).\n\
   -i <file>\t Play from file (only .oni supported at the moment).\n\
+  -xr\t\tOutput raw kinect data\n\
+  -xt\t\tOutput joint orientation data\n\
+  -xd\t\tTurn on puppet defaults: -xr -xt -q -w -r\n\
   -h\t\t Show help.\n\n\
 For a more detailed explanation of options consult the README file.\n\n",
 		   name, name);
@@ -546,6 +638,26 @@ int main(int argc, char **argv) {
 			break;
 		case 'r':
 			mirrorMode = false;
+			break;
+        case 'x': //Set multipliers
+			switch(argv[arg][2]) {
+			case 'r': // turn on raw mode
+				raw = true;
+				break;
+            case 't': // send joint orientations
+				sendOrient = true;
+				break; 
+			case 'd': // turn on default options
+				raw = true;
+				preview = true;
+				sendOrient = true;
+				mirrorMode = false;
+				oscFunc = &genQCMsg;				
+				break;			
+			default:
+				printf("Bad option given.\n");
+				usage(argv[0]);
+			}
 			break;
 		default:
 			printf("Unrecognized option.\n");
