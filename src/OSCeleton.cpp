@@ -250,7 +250,7 @@ int jointPos(XnUserID player, XnSkeletonJoint eJoint) {
 // Generate OSC message with default format
 void genOscMsg(osc::OutboundPacketStream *p, char *name) {
 
-	if (posConfidence >= 0.5f)
+	if (handMode || posConfidence >= 0.5f)
 	{
 	  *p << osc::BeginMessage( "/joint" );
 	  *p << name;
@@ -359,9 +359,15 @@ void sendHandOSC() {
 
 	osc::OutboundPacketStream p(osc_buffer, OUTPUT_BUFFER_SIZE);
 	p << osc::BeginBundleImmediate;
-	jointCoords[0] = off_x + (mult_x * (480 - handCoords[0]) / 960); //Normalize coords to 0..1 interval
-	jointCoords[1] = off_y + (mult_y * (320 - handCoords[1]) / 640); //Normalize coords to 0..1 interval
-	jointCoords[2] = off_z + (mult_z * handCoords[2] * 7.8125 / 10000); //Normalize coords to 0..7.8125 interval
+	if (!raw) {
+	    jointCoords[0] = off_x + (mult_x * (480 - handCoords[0]) / 960); //Normalize coords to 0..1 interval
+	    jointCoords[1] = off_y + (mult_y * (320 - handCoords[1]) / 640); //Normalize coords to 0..1 interval
+	    jointCoords[2] = off_z + (mult_z * handCoords[2] * 7.8125 / 10000); //Normalize coords to 0..7.8125 interval
+	} else {
+	    jointCoords[0] = handCoords[0];
+	    jointCoords[1] = handCoords[1];
+	    jointCoords[2] = handCoords[2];
+	}
 	oscFunc(&p, "l_hand");
 	p << osc::EndBundle;
     transmitSocket->Send(p.Data(), p.Size());
@@ -708,8 +714,8 @@ int main(int argc, char **argv) {
 		nRetVal = gestureGenerator.Create(context);
 		nRetVal = gestureGenerator.RegisterGestureCallbacks(Gesture_Recognized, Gesture_Process, NULL, hGestureCallbacks); 
 		nRetVal = handsGenerator.RegisterHandCallbacks(new_hand, update_hand, lost_hand, NULL, hHandsCallbacks);
-		//if (filter)
-		//	handsGenerator.SetSmoothing(0.8);
+		if (filter)
+			handsGenerator.SetSmoothing(0.2);
 	}
 	else {
 		nRetVal = context.FindExistingNode(XN_NODE_TYPE_USER, userGenerator);
