@@ -101,10 +101,30 @@ void XN_CALLBACK_TYPE Gesture_Process(xn::GestureGenerator& generator, const XnC
 //hand callbacks new_hand, update_hand, lost_hand
 void XN_CALLBACK_TYPE new_hand(xn::HandsGenerator &generator, XnUserID nId, const XnPoint3D *pPosition, XnFloat fTime, void *pCookie) {
 	printf("New Hand %d\n", nId);
+
+	if (kitchenMode) return;
+
+	osc::OutboundPacketStream p(osc_buffer, OUTPUT_BUFFER_SIZE);
+	p << osc::BeginBundleImmediate;
+	p << osc::BeginMessage("/new_user");
+	p << (int)nId;
+	p << osc::EndMessage;
+	p << osc::EndBundle;
+	transmitSocket->Send(p.Data(), p.Size());
 }
 void XN_CALLBACK_TYPE lost_hand(xn::HandsGenerator &generator, XnUserID nId, XnFloat fTime, void *pCookie) {
 	printf("Lost Hand %d               \n", nId);
     gestureGenerator.AddGesture(GESTURE_TO_USE, NULL);
+    
+	if (kitchenMode) return;
+
+	osc::OutboundPacketStream p( osc_buffer, OUTPUT_BUFFER_SIZE );
+	p << osc::BeginBundleImmediate;
+	p << osc::BeginMessage("/lost_user");
+	p << (int)nId;
+	p << osc::EndMessage;
+	p << osc::EndBundle;
+	transmitSocket->Send(p.Data(), p.Size());
 }
 
 void XN_CALLBACK_TYPE update_hand(xn::HandsGenerator &generator, XnUserID nID, const XnPoint3D *pPosition, XnFloat fTime, void *pCookie) {
